@@ -1,0 +1,173 @@
+---
+title: "Practical Machine Learning"
+author: "Ying Baolong"
+date: "March 23, 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache=TRUE)
+```
+
+# Background and Introduction
+
+Using devices such as *Jawbone Up*, *Nike FuelBand*, and *Fitbit* it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks.
+
+One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, we will use data recorded from accelerometers on the belt, forearm, arm, and dumbbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways.
+
+More information is available from the website http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+The goal of this project is to predict the manner in which the participants did the exercise. This is the classe variable of the training set, which classifies the correct and incorrect outcomes into A, B, C, D, and E categories. This report describes how the model for the project was built, cross-validation, expected out of sample error calculation, and the choices made. It was used successfully to accurately predict all 20 different test cases on the Coursera website.
+
+# Data Description
+
+The training data for this project are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. 
+
+We first download the data from the links referenced above to our computer and upload the files into R (using RStudio), interpreting the miscellaneous NA, #DIV/0! and empty fields as NA:
+
+```{r, }
+
+library(caret,verbose=FALSE)
+library(rpart,verbose=FALSE)
+library(rpart.plot,verbose=FALSE)
+library(RColorBrewer,verbose=FALSE)
+library(rattle,verbose=FALSE)
+library(randomForest,verbose=FALSE)
+library(knitr,verbose=FALSE)
+
+set.seed(1000)
+trainUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+training <- read.csv(url(trainUrl), na.strings=c("NA","#DIV/0!",""))
+testing <- read.csv(url(testUrl), na.strings=c("NA","#DIV/0!",""))
+
+
+```
+We take a quick look at the data and particularly at `classe` which is the variable we need to predict:
+```{r}
+table(training$classe)
+```
+Partioning the training set into two
+```{r}
+inTrain <- createDataPartition(training$classe, p=0.75, list=FALSE)
+myTraining <- training[inTrain, ]
+myTesting <- training[-inTrain, ]
+dim(myTraining); dim(myTesting)
+```
+
+# Cleaning the Data
+
+Remove NearZeroVariance variables
+
+```{r}
+nzv <- nearZeroVar(myTraining, saveMetrics=TRUE)
+myTraining <- myTraining[,nzv$nzv==FALSE]
+nzv<- nearZeroVar(myTesting,saveMetrics=TRUE)
+myTesting <- myTesting[,nzv$nzv==FALSE]
+```
+
+Killing first column of Dataset - ID Removing first ID variable so that it does not interfer with ML Algorithms:
+
+```{r}
+myTraining <- myTraining[-1]
+```
+
+Clean variables with more than 60% NA
+```{r}
+n <- nrow(myTraining)
+cols <- length(myTraining)
+remove_list <- NULL
+for(i in 1:cols) {
+    if( sum( is.na( myTraining[, i] ) ) /n >= .7) {
+        remove_list <-c(remove_list,i)
+    }
+}
+myTraining <-myTraining[,-remove_list]
+```
+
+Transform the myTesting and testing data sets
+```{r}
+clean1 <- colnames(myTraining)
+clean2 <- colnames(myTraining[,-58])
+myTesting <- myTesting[clean1]         
+testing <- testing[clean2]            
+
+dim(myTesting);dim(testing)
+
+# To get the same class between testing and myTraining
+testing <- rbind(myTraining[2, -58] , testing)
+testing <- testing[-1,]
+```
+
+# Prediction with Decision Trees
+
+```{r}
+modFitA1 <- rpart(classe ~ ., data=myTraining, method="class")
+fancyRpartPlot(modFitA1)
+```
+Cross-validation on the `myTesting`
+```{r}
+predictionsA1 <- predict(modFitA1, myTesting, type = "class")
+cmtree <- confusionMatrix(predictionsA1, myTesting$classe)
+cmtree
+
+plot(cmtree$table, main = paste("Decision Tree Confusion Matrix: Accuracy =", round(cmtree$overall['Accuracy'], 4)))
+```
+
+
+
+# Prediction with Random Forests
+```{r}
+modFitB1 <- randomForest(classe ~ ., data=myTraining)
+predictionB1 <- predict(modFitB1, myTesting, type = "class")
+cmrf <- confusionMatrix(predictionB1, myTesting$classe)
+cmrf
+plot(modFitB1)
+plot(cmrf$table, col = cmtree$byClass, main = paste("Random Forest Confusion Matrix: Accuracy =", round(cmrf$overall['Accuracy'], 4)))
+```
+
+# Prediction with Generalized Boosted Regression
+
+```{r}
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 5,
+                           repeats = 1)
+
+gbmFit1 <- train(classe ~ ., data=myTraining, method = "gbm",
+                 trControl = fitControl,
+                 verbose = FALSE)
+
+
+gbmFinMod1 <- gbmFit1$finalModel
+
+gbmPredTest <- predict(gbmFit1, newdata=myTesting)
+gbmAccuracyTest <- confusionMatrix(gbmPredTest, myTesting$classe)
+gbmAccuracyTest
+plot(gbmFit1)
+```
+
+# Predicting Results on the Test Data
+
+Random Forests gave an Accuracy in the myTesting dataset of 99.94%, which was more accurate that what I got from the Decision Trees or GBM. The expected out-of-sample error is 100-99.94 = 0.06%.
+
+```{r}
+predictionB2 <- predict(modFitB1, testing, type = "class")
+predictionB2
+```
+
+# Conclusion
+
+In this assignment, we accurately predicted the classification of 20 observations using a Random Forest algorithm trained on a subset of data using less than 20% of the covariates.
+
+The accuracy obtained (accuracy = 99.94%, and out-of-sample error = 0.06%) is obviously highly suspicious as it is never the case that machine learning algorithms are that accurate, and a mere 85% if often a good accuracy result.
+
+Either the 6 participants for whom we have data were extraordinarily obedient (for more than 19 thousand observations, a strong performance! This however might be explained by the highly controlled conditions of the data collection), or the data was somehow doctored for this class, or additional testing needs to be performed on other different participants, or Fitbit really works!
+
+It may be interesting to apply the fitModel tree from the Random Forest algorithm obtained in this paper (without any re-calibration) to a completely new set of participants, to complement and validate the analysis.
+
+This project was a very interesting introduction to practical machine learning, and opened up many doors in machine learning in R.
+
